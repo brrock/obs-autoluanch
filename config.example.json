@@ -1,0 +1,26 @@
+{
+  "poll_interval_ms": 1000,
+  "obs_executable": "/Applications/OBS.app/Contents/MacOS/OBS",
+  "profiles": [
+    {
+      "name": "game-capture",
+      "app": "Chess",
+      "app_match": "exact",
+      "app_title": "",
+      "app_title_match": "any",
+      "scene": "Chess Capture",
+      "start_recording": true,
+      "obs_args": ["--profile", "Game"]
+    },
+    {
+      "name": "browser-demo",
+      "app": "Google Chrome",
+      "app_match": "prefix",
+      "app_title": "Demo",
+      "app_title_match": "contains",
+      "scene": "Browser Demo",
+      "start_recording": false,
+      "obs_args": ["--profile", "Demo"]
+    }
+  ]
+}
