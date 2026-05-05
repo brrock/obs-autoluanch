@@ -123,24 +123,34 @@ fn runDaemon(gpa: std.mem.Allocator, io: std.Io, config_path: []const u8) !void 
     var config_arena = std.heap.ArenaAllocator.init(gpa);
     defer config_arena.deinit();
 
-    var config = try loadConfigLeaky(config_arena.allocator(), gpa, io, config_path);
-    var profiles = activeProfiles(config);
-    if (profiles.len == 0) return error.EmptyConfig;
+    var config: Config = .{};
+    var profiles: []const WatchConfig = &.{};
+    var config_mtime: ?std.Io.Timestamp = null;
+    var logged_missing_config = false;
 
-    var config_mtime = try fileMtime(io, config_path);
-
-    var states = try gpa.alloc(InstanceState, profiles.len);
+    var states = try gpa.alloc(InstanceState, 0);
     defer gpa.free(states);
-    @memset(states, .{});
-
-    std.debug.print("watching {d} profile(s); polling every {d} ms\n", .{
-        profiles.len,
-        config.poll_interval_ms,
-    });
 
     while (true) {
-        const current_mtime = fileMtime(io, config_path) catch config_mtime;
-        if (current_mtime.nanoseconds != config_mtime.nanoseconds) {
+        const current_mtime = fileMtime(io, config_path) catch |err| {
+            if (!logged_missing_config or profiles.len != 0) {
+                std.debug.print("waiting for config at {s}: {s}\n", .{ config_path, @errorName(err) });
+                logged_missing_config = true;
+            }
+            if (profiles.len != 0) {
+                gpa.free(states);
+                states = try gpa.alloc(InstanceState, 0);
+                config_arena.deinit();
+                config_arena = std.heap.ArenaAllocator.init(gpa);
+                config = .{};
+                profiles = &.{};
+                config_mtime = null;
+            }
+            try std.Io.sleep(io, std.Io.Duration.fromMilliseconds(1000), .boot);
+            continue;
+        };
+
+        if (config_mtime == null or current_mtime.nanoseconds != config_mtime.?.nanoseconds) {
             const old_profiles = profiles;
             const old_states = states;
 
@@ -149,13 +159,15 @@ fn runDaemon(gpa: std.mem.Allocator, io: std.Io, config_path: []const u8) !void 
                 next_arena.deinit();
                 std.debug.print("failed to reload config: {s}\n", .{@errorName(err)});
                 config_mtime = current_mtime;
+                try std.Io.sleep(io, std.Io.Duration.fromMilliseconds(1000), .boot);
                 continue;
             };
             const next_profiles = activeProfiles(next_config);
             if (next_profiles.len == 0) {
                 next_arena.deinit();
-                std.debug.print("reload ignored because config has no profiles\n", .{});
+                std.debug.print("config loaded but has no profiles; waiting for edits\n", .{});
                 config_mtime = current_mtime;
+                try std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(next_config.poll_interval_ms)), .boot);
                 continue;
             }
 
@@ -174,7 +186,11 @@ fn runDaemon(gpa: std.mem.Allocator, io: std.Io, config_path: []const u8) !void 
             profiles = next_profiles;
             states = next_states;
             config_mtime = current_mtime;
-            std.debug.print("reloaded config; watching {d} profile(s)\n", .{profiles.len});
+            logged_missing_config = false;
+            std.debug.print("loaded config; watching {d} profile(s); polling every {d} ms\n", .{
+                profiles.len,
+                config.poll_interval_ms,
+            });
         }
 
         for (profiles, 0..) |watch, index| {
