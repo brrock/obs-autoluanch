@@ -18,6 +18,7 @@ const WatchConfig = struct {
     name: []const u8,
     app: []const u8,
     app_match: []const u8 = "exact",
+    app_source: []const u8 = "process",
     app_title: []const u8 = "",
     app_title_match: []const u8 = "any",
     scene: []const u8,
@@ -320,6 +321,14 @@ fn promptProfile(
     existing: ?WatchConfig,
 ) !WatchConfig {
     const picked_app = try chooseFromList(arena, gpa, io, "Choose the app to watch", apps);
+    const source_mode = try chooseFromList(
+        arena,
+        gpa,
+        io,
+        "Which app name should be watched?",
+        &.{ "Mac menu bar app name", "Process executable name" },
+    );
+    const app_source = if (std.mem.eql(u8, source_mode, "Mac menu bar app name")) "display" else "process";
     const match_mode = try chooseFromList(
         arena,
         gpa,
@@ -362,6 +371,7 @@ fn promptProfile(
         .name = name,
         .app = app,
         .app_match = if (prefix_match) "prefix" else "exact",
+        .app_source = app_source,
         .app_title = app_title,
         .app_title_match = app_title_match,
         .scene = scene.name,
@@ -717,6 +727,10 @@ fn isProcessOpen(gpa: std.mem.Allocator, io: std.Io, process_name: []const u8) !
 }
 
 fn isWatchedAppOpen(gpa: std.mem.Allocator, io: std.Io, watch: WatchConfig) !bool {
+    if (std.mem.eql(u8, watch.app_source, "display")) {
+        return isDisplayAppOpen(gpa, io, watch);
+    }
+
     const process_open = if (std.mem.eql(u8, watch.app_match, "prefix"))
         try isProcessPrefixOpen(gpa, io, watch.app)
     else
@@ -726,6 +740,56 @@ fn isWatchedAppOpen(gpa: std.mem.Allocator, io: std.Io, watch: WatchConfig) !boo
     if (std.mem.eql(u8, watch.app_title_match, "any") or watch.app_title.len == 0) return true;
 
     return hasMatchingWindowTitle(gpa, io, watch);
+}
+
+fn isDisplayAppOpen(gpa: std.mem.Allocator, io: std.Io, watch: WatchConfig) !bool {
+    var script: std.ArrayList(u8) = .empty;
+    defer script.deinit(gpa);
+
+    try script.appendSlice(gpa,
+        \\tell application "System Events"
+        \\  repeat with p in application processes
+        \\    if background only of p is false then
+        \\      set procName to name of p as text
+        \\      if 
+    );
+    if (std.mem.eql(u8, watch.app_match, "prefix")) {
+        try script.appendSlice(gpa, "procName starts with ");
+    } else {
+        try script.appendSlice(gpa, "procName is ");
+    }
+    try appendAppleScriptString(gpa, &script, watch.app);
+
+    if (std.mem.eql(u8, watch.app_title_match, "any") or watch.app_title.len == 0) {
+        try script.appendSlice(gpa,
+            \\ then return "true"
+            \\    end if
+            \\  end repeat
+            \\end tell
+            \\return "false"
+        );
+    } else {
+        try script.appendSlice(gpa,
+            \\ then
+            \\        repeat with w in windows of p
+            \\          set windowTitle to name of w as text
+            \\          if 
+        );
+        try appendAppleScriptTitlePredicate(gpa, &script, watch);
+        try script.appendSlice(gpa,
+            \\ then return "true"
+            \\        end repeat
+            \\      end if
+            \\    end if
+            \\  end repeat
+            \\end tell
+            \\return "false"
+        );
+    }
+
+    const output = try runOsascript(gpa, io, script.items);
+    defer gpa.free(output);
+    return std.mem.eql(u8, std.mem.trim(u8, output, " \t\r\n"), "true");
 }
 
 fn hasMatchingWindowTitle(gpa: std.mem.Allocator, io: std.Io, watch: WatchConfig) !bool {
@@ -750,16 +814,7 @@ fn hasMatchingWindowTitle(gpa: std.mem.Allocator, io: std.Io, watch: WatchConfig
         \\        set windowTitle to name of w as text
         \\        if 
     );
-    if (std.mem.eql(u8, watch.app_title_match, "exact")) {
-        try script.appendSlice(gpa, "windowTitle is ");
-        try appendAppleScriptString(gpa, &script, watch.app_title);
-    } else if (std.mem.eql(u8, watch.app_title_match, "prefix")) {
-        try script.appendSlice(gpa, "windowTitle starts with ");
-        try appendAppleScriptString(gpa, &script, watch.app_title);
-    } else {
-        try script.appendSlice(gpa, "windowTitle contains ");
-        try appendAppleScriptString(gpa, &script, watch.app_title);
-    }
+    try appendAppleScriptTitlePredicate(gpa, &script, watch);
     try script.appendSlice(gpa,
         \\ then return "true"
         \\      end repeat
@@ -772,6 +827,17 @@ fn hasMatchingWindowTitle(gpa: std.mem.Allocator, io: std.Io, watch: WatchConfig
     const output = try runOsascript(gpa, io, script.items);
     defer gpa.free(output);
     return std.mem.eql(u8, std.mem.trim(u8, output, " \t\r\n"), "true");
+}
+
+fn appendAppleScriptTitlePredicate(gpa: std.mem.Allocator, script: *std.ArrayList(u8), watch: WatchConfig) !void {
+    if (std.mem.eql(u8, watch.app_title_match, "exact")) {
+        try script.appendSlice(gpa, "windowTitle is ");
+    } else if (std.mem.eql(u8, watch.app_title_match, "prefix")) {
+        try script.appendSlice(gpa, "windowTitle starts with ");
+    } else {
+        try script.appendSlice(gpa, "windowTitle contains ");
+    }
+    try appendAppleScriptString(gpa, script, watch.app_title);
 }
 
 fn isProcessPrefixOpen(gpa: std.mem.Allocator, io: std.Io, process_prefix: []const u8) !bool {

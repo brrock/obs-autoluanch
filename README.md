@@ -11,6 +11,7 @@ It watches configured app profiles, launches a separate OBS instance for each ma
 - Open a specific OBS scene and scene collection.
 - Optionally start recording when OBS launches.
 - Match apps by exact process name or prefix.
+- Match the visible macOS menu-bar app name for wrapper apps such as Minecraft/Java.
 - Optionally require a matching window title.
 - Edit profiles through macOS picker dialogs.
 - Run continuously through `brew services`.
@@ -119,12 +120,15 @@ The editor uses macOS dialogs to choose:
 
 - a profile action: add, edit, delete, or save
 - a running app to watch
+- whether to watch the macOS menu-bar app name or executable process name
 - app matching mode
 - optional window title matching
 - an OBS scene from your OBS scene collections
 - whether recording should start when OBS launches
 
 For apps whose names vary, choose `Any app starting with first 2 words`. The generated prefix can still be edited before saving.
+
+For Java/wrapper apps such as Minecraft, choose `Mac menu bar app name`. That matches the app name shown in the macOS menu bar instead of the lower-level executable name such as `java`.
 
 ## Config File
 
@@ -139,6 +143,7 @@ Example:
       "name": "browser-demo",
       "app": "Google Chrome",
       "app_match": "prefix",
+      "app_source": "display",
       "app_title": "Demo",
       "app_title_match": "contains",
       "scene": "Browser Demo",
@@ -156,6 +161,7 @@ Fields:
 - `profiles[].name`: stable profile name used in logs and reload state.
 - `profiles[].app`: process name or process-name prefix.
 - `profiles[].app_match`: `exact` or `prefix`.
+- `profiles[].app_source`: `display` for the macOS menu-bar app name, or `process` for executable process matching.
 - `profiles[].app_title`: optional window title text.
 - `profiles[].app_title_match`: `any`, `contains`, `exact`, or `prefix`.
 - `profiles[].scene`: OBS scene passed to `--scene`.
