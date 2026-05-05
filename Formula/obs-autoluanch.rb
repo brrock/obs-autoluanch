@@ -38,7 +38,7 @@ class ObsAutoluanch < Formula
   end
 
   test do
-    output = shell_output("#{bin}/obs-autoluanch status", 1)
+    output = shell_output("#{bin}/obs-autoluanch status 2>&1", 1)
     assert_match "not running", output
   end
 end
